@@ -8,8 +8,6 @@ from groq import Groq
 load_dotenv()
 api_key = os.getenv("GROQ_API_KEY")
 
-client = Groq(api_key=api_key)
-
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="CleverCram AI",
@@ -17,7 +15,12 @@ st.set_page_config(
     layout="centered"
 )
 
-# ---------------- DARK THEME (CUSTOM CSS) ----------------
+# ---------------- CLIENT ----------------
+client = None
+if api_key:
+    client = Groq(api_key=api_key)
+
+# ---------------- DARK THEME ----------------
 st.markdown("""
 <style>
 
@@ -34,7 +37,7 @@ h1 {
     letter-spacing: 0.5px;
 }
 
-/* Subtext */
+/* Caption */
 .stCaption {
     color: #9ca3af;
 }
@@ -80,7 +83,7 @@ div[data-baseweb="select"] > div {
 
 # ---------------- TITLE ----------------
 st.title("📚 CleverCram AI")
-st.caption("Minimal AI study tool — summaries, flashcards, and cram sheets")
+st.caption("Turn notes into summaries, flashcards, and cram sheets instantly.")
 
 # ---------------- SAFETY CHECK ----------------
 def safety_check(text):
@@ -91,15 +94,23 @@ def safety_check(text):
 def build_prompt(notes, mode):
 
     if mode == "Summary":
-        return f"Summarise into bullet points:\n\n{notes}"
+        return f"""
+Summarise these notes into clean bullet points.
+Keep it clear, concise, and accurate.
+
+Notes:
+{notes}
+"""
 
     elif mode == "Flashcards":
         return f"""
-Create 5 flashcards.
+Create exactly 5 study flashcards.
 
 Format:
-Q: ...
-A: ...
+Q: question
+A: answer
+
+Keep answers short and useful.
 
 Notes:
 {notes}
@@ -107,7 +118,8 @@ Notes:
 
     elif mode == "Cram Mode":
         return f"""
-Create a short revision cheat sheet.
+Turn these notes into a last-minute exam cheat sheet.
+Use short bullet points only.
 
 Notes:
 {notes}
@@ -118,63 +130,95 @@ def generate(prompt):
     try:
         chat = client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful academic study assistant. Be concise, clear and accurate."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
             temperature=0.3,
             max_tokens=800
         )
-        return chat.choices[0].message.content
 
-    except Exception as e:
-        return f"Error: {str(e)}"
+        return chat.choices[0].message.content.strip()
+
+    except Exception:
+        return None
 
 # ---------------- INPUT ----------------
-notes = st.text_area("Paste your notes here:")
+notes = st.text_area(
+    "Paste your notes here:",
+    height=220,
+    placeholder="Paste class notes, textbook paragraphs, revision content..."
+)
 
-mode = st.selectbox("Choose Study Mode:", ["Summary", "Flashcards", "Cram Mode"])
+mode = st.selectbox(
+    "Choose Study Mode:",
+    ["Summary", "Flashcards", "Cram Mode"]
+)
 
 # ---------------- RUN ----------------
 if st.button("Generate"):
 
-    if not notes.strip():
+    notes = notes.strip()
+
+    # Validation
+    if not notes:
         st.warning("Please paste notes first.")
 
     elif not api_key:
-        st.error("Missing GROQ_API_KEY")
+        st.error("Missing GROQ_API_KEY in .env file.")
+
+    elif len(notes) > 5000:
+        st.error("Notes too long. Please shorten your input.")
 
     elif not safety_check(notes):
-        st.error("Blocked due to unsafe input.")
+        st.error("Input blocked due to unsafe content.")
 
     else:
         start = time.time()
 
-        output = generate(build_prompt(notes, mode))
+        with st.spinner("Generating..."):
+            output = generate(build_prompt(notes, mode))
 
         end = time.time()
 
-        st.success("Done!")
-        st.caption(f"Response time: {round(end - start, 2)}s")
+        if not output:
+            st.error("AI service temporarily unavailable. Please try again later.")
 
-        # ---------------- OUTPUT ----------------
-        if mode == "Summary":
-            st.write(output)
+        else:
+            st.success("Done!")
+            st.caption(f"Response time: {round(end - start, 2)}s")
 
-        elif mode == "Flashcards":
-            st.subheader("🧠 Flashcards")
+            # ---------------- OUTPUT ----------------
+            if mode == "Summary":
+                st.subheader("📝 Summary")
+                st.write(output)
 
-            cards = output.split("Q:")
+            elif mode == "Flashcards":
+                st.subheader("🧠 Flashcards")
 
-            for i, card in enumerate(cards):
-                if card.strip():
-                    parts = card.split("A:")
+                cards = output.split("Q:")
 
-                    q = parts[0].strip()
-                    a = parts[1].strip() if len(parts) > 1 else ""
+                count = 1
+                for card in cards:
+                    if card.strip():
 
-                    with st.expander(f"Flashcard {i+1}"):
-                        st.markdown(f"**Q:** {q}")
-                        st.markdown("---")
-                        st.markdown(f"**A:** {a}")
+                        parts = card.split("A:")
+                        question = parts[0].strip()
+                        answer = parts[1].strip() if len(parts) > 1 else "No answer generated."
 
-        elif mode == "Cram Mode":
-            st.subheader("⚡ Cram Sheet")
-            st.write(output)
+                        with st.expander(f"Flashcard {count}"):
+                            st.markdown(f"**Q:** {question}")
+                            st.markdown("---")
+                            st.markdown(f"**A:** {answer}")
+
+                        count += 1
+
+            elif mode == "Cram Mode":
+                st.subheader("⚡ Cram Sheet")
+                st.write(output)
